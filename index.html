@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#DC2626" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>CBT-Q - Computer Based Test</title>
+    <meta name="description" content="CBT-Q - Aplikasi Ujian Online. Dibuat oleh D14nr." />
+    <link rel="icon" type="image/png" href="https://lh3.googleusercontent.com/d/1zPGgFw4WVSz4v-Clgd0XvlgZ41QePiAY=w1200?authuser=0" />
+    <link rel="apple-touch-icon" href="https://lh3.googleusercontent.com/d/1zPGgFw4WVSz4v-Clgd0XvlgZ41QePiAY=w1200?authuser=0" />
+    <link rel="manifest" href="/manifest.json" />
+    <!-- Removed Firestore preconnect after migrating to Supabase -->
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f3f4f6; }
+      input, select, textarea { font-size: 16px !important; }
+      button, a { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+      body { overscroll-behavior-y: contain; }
+      #root:empty { display:flex; justify-content:center; align-items:center; min-height:100vh; background:linear-gradient(135deg,#DC2626,#991B1B); }
+      #root:empty::after { content:''; width:40px; height:40px; border:3px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:spin .8s linear infinite; }
+      @keyframes spin { to { transform:rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <noscript>
+      <div style="display:flex;justify-content:center;align-items:center;min-height:100vh;background:#DC2626;color:white;text-align:center;padding:20px;">
+        <div><h1>CBT-Q</h1><p>Aktifkan JavaScript untuk menggunakan aplikasi ini.</p></div>
+      </div>
+    </noscript>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "name": "CBT-Q - Computer Based Test",
+  "short_name": "CBT-Q",
+  "description": "Aplikasi Ujian Online berbasis Computer Based Test. Dibuat oleh D14nr.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f4f6",
+  "theme_color": "#DC2626",
+  "icons": [
+    {
+      "src": "https://lh3.googleusercontent.com/d/1zPGgFw4WVSz4v-Clgd0XvlgZ41QePiAY=w192",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://lh3.googleusercontent.com/d/1zPGgFw4WVSz4v-Clgd0XvlgZ41QePiAY=w512",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["education", "productivity"],
+  "lang": "id",
+  "dir": "ltr",
+  "scope": "/",
+  "prefer_related_applications": false
+}
