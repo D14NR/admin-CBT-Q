@@ -176,7 +176,27 @@ img {
 }
 
 /* Print */
+.print-only {
+  display: none;
+}
+
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 15mm;
+  }
+
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    min-height: auto !important;
+    background: #fff !important;
+    color: #111 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
   body * {
     visibility: hidden !important;
   }
@@ -186,22 +206,60 @@ img {
     visibility: visible !important;
   }
 
-  .print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
+  .print-area,
+  .print-area .fixed,
+  .print-area .relative,
+  .print-area .absolute,
+  .print-area .inset-0 {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: block !important;
   }
 
-  .no-print { display: none !important; }
-  .print-hide { display: none !important; }
-  .print-only { display: block !important; }
-  .print-card {
+  .print-area .overflow-y-auto,
+  .print-area .print-area-inner,
+  .print-area .print-break,
+  .print-area * {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+  }
+
+  .print-area .no-print { display: none !important; }
+  .print-area .print-hide { display: none !important; }
+  .print-area .print-only { display: block !important; }
+  .print-area .print-break {
     break-inside: avoid;
     page-break-inside: avoid;
   }
-  body {
-    background: #fff !important;
+
+  .print-area .rounded-3xl,
+  .print-area .shadow-sm,
+  .print-area .border {
+    box-shadow: none !important;
+    border: 1px solid #e5e7eb !important;
+    border-radius: 0 !important;
+  }
+
+  .print-area .rounded-3xl {
+    margin: 0 !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
   }
 }
 

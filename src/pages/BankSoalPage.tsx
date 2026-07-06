@@ -4,8 +4,7 @@ import { Layout } from '@/components/Layout';
 import { SearchableSelect, Option } from '@/components/SearchableSelect';
 import { RichTextEditor } from '@/components/RichTextEditor';
 import { supabase } from '@/supabaseClient';
-import { uploadImageToCloudinary, deleteImage } from '@/cloudinary';
-import { Trash2, AlertTriangle, Loader2, UploadCloud } from 'lucide-react';
+import { Trash2, AlertTriangle } from 'lucide-react';
 
 interface BankSoal {
   id: string;
@@ -14,8 +13,6 @@ interface BankSoal {
   type_soal: string;
   no_soal: number;
   pertanyaan: string;
-  gambar_url?: string | null;
-  gambar_file_id?: string | null;
   opsi_1?: string | null;
   opsi_2?: string | null;
   opsi_3?: string | null;
@@ -33,31 +30,7 @@ interface Mapel {
   agenda_id?: string;
 }
 
-// Cloudinary helpers: extract public_id from a Cloudinary secure URL
-const extractDriveFileId = (url: string) => {
-  if (!url) return '';
-  try {
-    const u = new URL(url);
-    // path after /upload/ may contain version e.g. /upload/v162/.../public_id.ext
-    const parts = u.pathname.split('/');
-    const uploadIndex = parts.findIndex(p => p === 'upload');
-    if (uploadIndex === -1) return '';
-    const afterUpload = parts.slice(uploadIndex + 1).join('/');
-    // remove possible version prefix like v162345
-    const publicWithExt = afterUpload.replace(/^v\d+\//, '');
-    // strip extension
-    const lastDot = publicWithExt.lastIndexOf('.');
-    const publicId = lastDot !== -1 ? publicWithExt.substring(0, lastDot) : publicWithExt;
-    return publicId;
-  } catch (e) {
-    return '';
-  }
-};
-
-const normalizeDriveUrl = (input: string) => {
-  // For Cloudinary we keep the provided secure URL as-is
-  return input?.trim() || '';
-};
+// No image upload storage in this schema; images are not stored on Cloudinary.
 
 const INITIAL_STATE: any = {
   agenda_id: '',
@@ -66,12 +39,17 @@ const INITIAL_STATE: any = {
   type_soal: 'Pilihan Ganda Tunggal (PG)',
   no_soal: '',
   pertanyaan: '',
-  gambar_url: '',
   pilihan_a: '',
   pilihan_b: '',
   pilihan_c: '',
   pilihan_d: '',
   pilihan_e: '',
+  scor_opsi_1: '',
+  scor_opsi_2: '',
+  scor_opsi_3: '',
+  scor_opsi_4: '',
+  scor_opsi_5: '',
+  scor_opsi_esai: '',
   kunci_jawaban: '',
 };
 
@@ -90,19 +68,18 @@ export function BankSoalPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState(INITIAL_STATE);
   const [loading, setLoading] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [showAnswerKey, setShowAnswerKey] = useState(true);
 
   const [manageMapelId, setManageMapelId] = useState('');
   const [manageMapelName, setManageMapelName] = useState('');
+  const [optionCount, setOptionCount] = useState<number>(5);
 
   // Selection state
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleteType, setDeleteType] = useState<'selected' | 'all'>('selected');
   const [deleting, setDeleting] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [uploadError, setUploadError] = useState('');
-  const [selectedImageFile, setSelectedImageFile] = useState<File | null>(null);
-  const [localPreviewUrl, setLocalPreviewUrl] = useState<string>('');
 
   const location = useLocation();
   const [prefilledFromQuery, setPrefilledFromQuery] = useState<{ agenda?: boolean; mapel?: boolean }>({});
@@ -118,8 +95,6 @@ export function BankSoalPage() {
       ...r,
       mapel_id: r.mapel_id ? String(r.mapel_id) : null,
       no_soal: Number(r.no_soal) || 0,
-      gambar_url: r.gambar_url || null,
-      gambar_file_id: r.gambar_file_id || null,
       opsi_1: r.opsi_1 || null,
       opsi_2: r.opsi_2 || null,
       opsi_3: r.opsi_3 || null,
@@ -130,28 +105,7 @@ export function BankSoalPage() {
     setData(items);
   };
 
-  const handleRemoveImage = async () => {
-    const fileId = formData.gambar_file_id || '';
-    if (!fileId && !formData.gambar_url) {
-      // nothing to remove
-      setFormData((prev: any) => ({ ...prev, gambar_url: '', gambar_file_id: '' }));
-      setSelectedImageFile(null);
-      setLocalPreviewUrl('');
-      return;
-    }
-    if (!confirm('Hapus gambar yang terkait dengan soal ini?')) return;
-    try {
-      if (fileId) await deleteImage(fileId);
-    } catch (e) {
-      console.warn('Failed to delete image', e);
-    }
-    setFormData((prev: any) => ({ ...prev, gambar_url: '', gambar_file_id: '' }));
-    setSelectedImageFile(null);
-    if (localPreviewUrl) {
-      URL.revokeObjectURL(localPreviewUrl);
-      setLocalPreviewUrl('');
-    }
-  };
+  // image removal is not applicable under the current schema
 
   const fetchMapels = async () => {
     const { data: rows, error } = await supabase.from('mata_pelajaran').select('*');
@@ -254,51 +208,11 @@ export function BankSoalPage() {
     setSelectedIds([]);
   }, [data, manageMapelId, manageMapelName]);
 
-  const uploadToDrive = async (file: File) => {
-    setUploadError('');
-    setUploadingImage(true);
-    try {
-      const result = await uploadImageToCloudinary(file, `bank_soal`);
-      if (!result) throw new Error('Upload gagal');
-      setFormData((prev: any) => ({ ...prev, gambar_url: result.secure_url, gambar_file_id: result.public_id }));
-      return { thumbnailUrl: result.secure_url, fileId: result.public_id };
-    } catch (error: any) {
-      setUploadError(error.message || 'Gagal upload gambar.');
-      return null;
-    } finally {
-      setUploadingImage(false);
-    }
-  };
-
-  // Handle paste events on the question textarea to accept image paste
-
-  const handleSelectImage = (file: File) => {
-    setSelectedImageFile(file);
-    setUploadError('');
-    if (localPreviewUrl) {
-      URL.revokeObjectURL(localPreviewUrl);
-    }
-    setLocalPreviewUrl(URL.createObjectURL(file));
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
-      let uploadedUrl = formData.gambar_url;
-      let uploadedFileId = formData.gambar_file_id || '';
-
-      // preserve old file id so we can delete it after successful update if replaced
-      const oldFileId = formData.gambar_file_id || null;
-      if (selectedImageFile && !uploadedUrl) {
-        const uploaded = await uploadToDrive(selectedImageFile);
-        if (uploaded) {
-          uploadedUrl = uploaded.thumbnailUrl;
-          uploadedFileId = uploaded.fileId;
-        }
-      }
-
-      const normalizedImageUrl = normalizeDriveUrl(uploadedUrl);
+      // map frontend type label to DB canonical value
       // map frontend type label to DB canonical value
       const TYPE_MAP: Record<string, string> = {
         'Pilihan Ganda Tunggal (PG)': 'pilihan_ganda',
@@ -318,14 +232,18 @@ export function BankSoalPage() {
         type_soal: dbType,
         no_soal: formData.no_soal ? Number(formData.no_soal) : null,
         pertanyaan: formData.pertanyaan || '',
-        gambar_url: normalizedImageUrl || null,
-        gambar_file_id: uploadedFileId || null,
         opsi_1: formData.pilihan_a || null,
         opsi_2: formData.pilihan_b || null,
         opsi_3: formData.pilihan_c || null,
         opsi_4: formData.pilihan_d || null,
         opsi_5: formData.pilihan_e || null,
-        kunci_jawaban: formData.kunci_jawaban || null,
+        kunci_jawaban: normalizeKunciJawaban(formData.kunci_jawaban || '', formData.type_soal) || null,
+        scor_opsi_1: formData.scor_opsi_1 !== '' ? Number(formData.scor_opsi_1) : null,
+        scor_opsi_2: formData.scor_opsi_2 !== '' ? Number(formData.scor_opsi_2) : null,
+        scor_opsi_3: formData.scor_opsi_3 !== '' ? Number(formData.scor_opsi_3) : null,
+        scor_opsi_4: formData.scor_opsi_4 !== '' ? Number(formData.scor_opsi_4) : null,
+        scor_opsi_5: formData.scor_opsi_5 !== '' ? Number(formData.scor_opsi_5) : null,
+        scor_opsi_esai: formData.scor_opsi_esai !== '' ? Number(formData.scor_opsi_esai) : null,
       };
 
       // For Benar/Salah or Setuju/Tidak: map pernyataan_i -> opsi_i
@@ -344,23 +262,9 @@ export function BankSoalPage() {
         }
       }
 
-      if (uploadedUrl && !normalizedImageUrl) {
-        alert('Gambar URL tidak valid. Gunakan URL Cloudinary yang dihasilkan oleh proses upload.');
-        setLoading(false);
-        return;
-      }
-
       if (editingId) {
         const { error } = await supabase.from('bank_soal').update(payload).eq('id', editingId);
         if (error) throw error;
-        // if replaced image, delete old file from Cloudinary
-        if (oldFileId && payload.gambar_file_id && oldFileId !== payload.gambar_file_id) {
-          try { await deleteImage(oldFileId); } catch (e) { console.warn('Failed to delete old image', e); }
-        }
-        // if user removed image (no payload.gambar_url) delete old
-        if (oldFileId && !payload.gambar_url && !payload.gambar_file_id) {
-          try { await deleteImage(oldFileId); } catch (e) { console.warn('Failed to delete old image', e); }
-        }
       } else {
         const { error } = await supabase.from('bank_soal').insert(payload);
         if (error) throw error;
@@ -369,11 +273,6 @@ export function BankSoalPage() {
       setIsFormPageOpen(false);
       setFormData(INITIAL_STATE);
       setEditingId(null);
-      setSelectedImageFile(null);
-      if (localPreviewUrl) {
-        URL.revokeObjectURL(localPreviewUrl);
-        setLocalPreviewUrl('');
-      }
       fetchBankSoal();
     } catch (error: any) {
       console.error("Error saving document: ", error);
@@ -421,9 +320,18 @@ export function BankSoalPage() {
         }
       }
     }
-    if (!newState.gambar_file_id && newState.gambar_url) {
-      newState.gambar_file_id = extractDriveFileId(newState.gambar_url);
-    }
+    // image fields removed from schema; nothing to map here
+    newState.scor_opsi_1 = item.scor_opsi_1 ?? '';
+    newState.scor_opsi_2 = item.scor_opsi_2 ?? '';
+    newState.scor_opsi_3 = item.scor_opsi_3 ?? '';
+    newState.scor_opsi_4 = item.scor_opsi_4 ?? '';
+    newState.scor_opsi_5 = item.scor_opsi_5 ?? '';
+    newState.scor_opsi_esai = item.scor_opsi_esai ?? '';
+    // normalize kunci_jawaban (strip possible HTML stored previously) into plain letters/comma
+    newState.kunci_jawaban = normalizeKunciJawaban(item.kunci_jawaban ?? newState.kunci_jawaban ?? '', newState.type_soal);
+    // determine option count from existing opsi_* values (min 2, max 5)
+    const present = [1,2,3,4,5].reduce((acc, i) => acc + (item[`opsi_${i}`] ? 1 : 0), 0);
+    setOptionCount(Math.max(2, Math.min(5, present || 5)));
     setFormData(newState);
     setEditingId(item.id);
     setIsFormPageOpen(true);
@@ -434,10 +342,6 @@ export function BankSoalPage() {
       try {
         const { error } = await supabase.from('bank_soal').delete().eq('id', item.id);
         if (error) throw error;
-        const fileId = item.gambar_file_id || '';
-        if (fileId) {
-          try { await deleteImage(fileId); } catch (e) { console.warn('Failed to delete image', e); }
-        }
         fetchBankSoal();
       } catch (error) {
         console.error("Error deleting document: ", error);
@@ -523,6 +427,228 @@ export function BankSoalPage() {
     return typeMap[type] || type;
   };
 
+  const renderPreviewOptions = (item: BankSoal) => {
+    const normalizedType = String(item.type_soal || '').toLowerCase();
+    if (normalizedType.includes('menjodohkan')) {
+      const pairs = [1, 2, 3, 4, 5]
+        .map((i) => {
+          const raw = item[`opsi_${i}`] || '';
+          const [left, right] = String(raw).split('||');
+          return { left: left || '', right: right || '' };
+        })
+        .filter(pair => pair.left || pair.right);
+      if (pairs.length === 0) {
+        return <div className="text-sm text-gray-500">Tidak ada pasangan jawaban untuk ditampilkan.</div>;
+      }
+      return (
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-[1fr_1fr]">
+          <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-gray-700 mb-3">Pernyataan Kiri</div>
+            <div className="space-y-3">
+              {pairs.map((pair, index) => (
+                <div key={`mj-left-${index}`} className="flex gap-3 items-start">
+                  <span className="mt-1 font-semibold text-gray-900">{index + 1}.</span>
+                  <div className="prose prose-sm text-gray-700" dangerouslySetInnerHTML={{ __html: pair.left || '&nbsp;' }} />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-gray-700 mb-3">Jawaban Pernyataan Kanan</div>
+            <div className="space-y-3">
+              {pairs.map((pair, index) => (
+                <div key={`mj-right-${index}`} className="flex gap-3 items-start">
+                  <span className="mt-1 font-semibold text-gray-900">{String.fromCharCode(65 + index)}.</span>
+                  <div className="prose prose-sm text-gray-700" dangerouslySetInnerHTML={{ __html: pair.right || '&nbsp;' }} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    if (normalizedType.includes('pilihan_benar/salah') || normalizedType.includes('pilihan_setuju/tidak') || normalizedType.includes('benar') || normalizedType.includes('setuju')) {
+      const answers = [1, 2, 3, 4, 5]
+        .map((i) => ({
+          index: i,
+          text: item[`opsi_${i}`] || ''
+        }))
+        .filter(answer => String(answer.text).trim() !== '');
+      if (answers.length === 0) {
+        return <div className="text-sm text-gray-500">Tidak ada pernyataan untuk ditampilkan.</div>;
+      }
+
+      const trueLabel = normalizedType.includes('setuju') ? 'Setuju' : 'Benar';
+      const falseLabel = normalizedType.includes('setuju') ? 'Tidak' : 'Salah';
+      const trueValue = normalizedType.includes('setuju') ? 'S' : 'B';
+      const falseValue = normalizedType.includes('setuju') ? 'T' : 'S';
+      const selectedAnswers = String(item.kunci_jawaban || '')
+        .toUpperCase()
+        .split(/[\s,]+/)
+        .filter(Boolean);
+
+      return (
+        <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="text-sm font-semibold text-gray-700 mb-3">Pilihan Pernyataan</div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[380px] table-fixed border-collapse">
+              <thead>
+                <tr className="bg-gray-50 text-left text-sm text-gray-600">
+                  <th className="w-12 px-3 py-2">No.</th>
+                  <th className="px-3 py-2">Pernyataan</th>
+                  <th className="w-24 px-3 py-2">{trueLabel}</th>
+                  <th className="w-24 px-3 py-2">{falseLabel}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {answers.map((answer) => (
+                  <tr key={`bs-${answer.index}`}>
+                    <td className="px-3 py-3 font-semibold text-gray-900 align-top">{answer.index}.</td>
+                    <td className="px-3 py-3 align-top">
+                      <div className="prose prose-sm text-gray-700" dangerouslySetInnerHTML={{ __html: answer.text }} />
+                    </td>
+                    <td className="px-3 py-3 align-top">
+                      <div className="flex items-center justify-center">
+                        <input type="checkbox" disabled className="h-4 w-4 rounded-sm border-gray-300 text-gray-700 bg-white" />
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 align-top">
+                      <div className="flex items-center justify-center">
+                        <input type="checkbox" disabled className="h-4 w-4 rounded-sm border-gray-300 text-gray-700 bg-white" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    if (normalizedType.includes('pilihan_ganda') || normalizedType.includes('pilihan ganda') || normalizedType.includes('kompleks')) {
+      const options = [1, 2, 3, 4, 5]
+        .map((i) => ({
+          letter: String.fromCharCode(64 + i),
+          text: item[`opsi_${i}`] || ''
+        }))
+        .filter(option => String(option.text).trim() !== '');
+      if (options.length === 0) {
+        return <div className="text-sm text-gray-500">Tidak ada opsi untuk ditampilkan.</div>;
+      }
+      return (
+        <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="text-sm font-semibold text-gray-700 mb-3">Pilihan Jawaban</div>
+          <div className="grid gap-3">
+            {options.map(option => (
+              <div key={`pg-${option.letter}`} className="flex gap-3 items-start">
+                <span className="mt-1 font-semibold text-gray-900">{option.letter}.</span>
+                <div className="prose prose-sm text-gray-700" dangerouslySetInnerHTML={{ __html: option.text }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    if (normalizedType.includes('esai') || normalizedType.includes('uraian')) {
+      return (
+        <div className="rounded-2xl border border-gray-200 p-4 text-sm text-gray-600">
+          <p className="font-semibold mb-2">Jawaban:</p>
+          <div className="h-28 rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3">&nbsp;</div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  const renderPrintContent = () => (
+    <div className="print-area hidden">
+      <div className="print-only">
+        <div className="mx-auto w-full max-w-6xl bg-white px-6 py-8">
+          <div className="mb-8 rounded-3xl border border-gray-200 bg-white p-6">
+            <div className="text-xs uppercase tracking-[0.32em] text-gray-500">CBT-Q • Computer Based Test</div>
+            <div className="mt-3 text-2xl font-semibold text-gray-900">Preview Soal</div>
+            <div className="mt-1 text-sm text-gray-600">{new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })} • {filteredData.length} soal</div>
+          </div>
+          <div className="space-y-10">
+            {filteredData.length === 0 ? (
+              <div className="rounded-3xl border border-dashed border-gray-300 bg-white p-8 text-center text-gray-500">
+                Tidak ada soal untuk ditampilkan.
+              </div>
+            ) : (
+              filteredData.map((item, index) => (
+                <div key={`print-${item.id}`} className="print-break">
+                  <div className="rounded-3xl border border-gray-200 bg-white p-6">
+                    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-2">
+                        <div className="text-sm font-semibold uppercase tracking-[0.16em] text-red-600">Soal {index + 1}</div>
+                        <div className="text-base font-semibold text-gray-900">{item.mata_pelajaran || '-'} • {getTypeShort(item.type_soal)} • No. {item.no_soal}</div>
+                      </div>
+                      {showAnswerKey && item.kunci_jawaban && (
+                        <div className="rounded-full border border-gray-200 bg-gray-100 px-3 py-1 text-sm text-gray-600">Kunci: {item.kunci_jawaban}</div>
+                      )}
+                    </div>
+                    <div className="mb-6 rounded-3xl border border-gray-200 bg-gray-50 p-5">
+                      <div className="text-sm font-semibold text-gray-700 mb-3">Pertanyaan</div>
+                      <div className="prose prose-sm text-gray-800" dangerouslySetInnerHTML={{ __html: item.pertanyaan || '<p>-</p>' }} />
+                    </div>
+                    <div className="space-y-4">
+                      {renderPreviewOptions(item)}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const normalizeKunciJawaban = (raw: any, type?: string) => {
+    if (!raw) return '';
+    try {
+      let value = String(raw);
+      value = value.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');
+      value = value.replace(/<[^>]*>/g, '').trim();
+      if (!value) return '';
+
+      const normalizedType = String(type || '').toLowerCase();
+      const isBsSt = normalizedType.includes('benar') || normalizedType.includes('salah') || normalizedType.includes('setuju') || normalizedType.includes('tidak');
+      const isPgPk = normalizedType.includes('ganda');
+      const isMj = normalizedType.includes('menjodohkan');
+      const isUr = normalizedType.includes('esai') || normalizedType.includes('uraian');
+
+      if (isUr) {
+        return value;
+      }
+
+      if (isMj) {
+        return value.replace(/\s+/g, '').toUpperCase();
+      }
+
+      if (isBsSt) {
+        const letters = value.replace(/[^A-Za-z]/g, '').toUpperCase().split('');
+        return letters.join(',');
+      }
+
+      if (isPgPk) {
+        const cleaned = value.replace(/[^A-Za-z,\s]/g, '').toUpperCase();
+        const parts = cleaned.split(/[ ,]+/).map(p => p.trim()).filter(Boolean);
+        return parts.join(',');
+      }
+
+      const cleaned = value.replace(/[^A-Za-z0-9,\s]/g, '').toUpperCase();
+      const parts = cleaned.split(/[ ,]+/).map(p => p.trim()).filter(Boolean);
+      return parts.join(',');
+    } catch (e) {
+      return String(raw);
+    }
+  };
+
   const handleOpenCreateForm = () => {
     const nextNoSoal = computeNextNoSoal(manageMapelId || '', manageMapelName || '');
     setFormData({
@@ -531,14 +657,14 @@ export function BankSoalPage() {
       mata_pelajaran: manageMapelName || '',
       no_soal: nextNoSoal,
     });
+    setOptionCount(5);
     setEditingId(null);
-    setSelectedImageFile(null);
-    setLocalPreviewUrl('');
     setIsFormPageOpen(true);
   };
 
   return (
     <Layout title="Kelola Soal">
+      {renderPrintContent()}
       <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
           <p className="text-gray-600">
@@ -642,154 +768,420 @@ export function BankSoalPage() {
               placeholder="Tulis pertanyaan di sini... (Anda dapat menambahkan format, gambar, dan rumus matematika)"
             />
           </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-gray-700">Upload Gambar (Cloudinary)</label>
-            <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded-lg p-3 space-y-1">
-              <p className="font-semibold">Upload langsung:</p>
-              <p className="font-mono text-[11px]">Hasil upload akan menyimpan Database.</p>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-3">
-              <label className="flex-1">
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleSelectImage(file);
-                  }}
-                />
-                <div className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 cursor-pointer">
-                  <UploadCloud className="h-4 w-4" />
-                  <span className="text-sm">Pilih Gambar</span>
-                </div>
-              </label>
-              <div className="flex-1">
-                <input
-                  type="text"
-                  value={formData.gambar_url}
-                  onChange={e => {
-                    const normalized = normalizeDriveUrl(e.target.value);
-                    setFormData({ ...formData, gambar_url: normalized || e.target.value, gambar_file_id: extractDriveFileId(normalized || e.target.value) });
-                  }}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-red-500 math-text math-input question-content"
-                  placeholder="URL thumbnail otomatis"
-                />
-              </div>
-            </div>
-
-            {uploadingImage && (
-              <div className="text-sm text-blue-600 flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" /> Mengupload gambar...
-              </div>
-            )}
-            {(localPreviewUrl || formData.gambar_url) && (
-              <div className="mt-3">
-                <p className="text-xs text-gray-600 mb-2">Preview Gambar:</p>
-                <div className="border rounded-lg overflow-hidden bg-gray-50">
-                  <img src={localPreviewUrl || formData.gambar_url} alt="Preview" className="w-full max-h-56 object-contain" />
-                </div>
-                <div className="flex gap-2 mt-2">
-                  <button
-                    type="button"
-                    onClick={handleRemoveImage}
-                    className="px-3 py-1 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50"
-                  >
-                    Hapus Gambar
-                  </button>
-                </div>
-              </div>
-            )}
-            {uploadError && (
-              <div className="text-sm text-red-600">
-                {uploadError}
-              </div>
-            )}
-
-            <p className="text-xs text-gray-500">
-
-            </p>
-          </div>
+          {/* Gambar field removed per user request */}
 
           {/* Pilihan Ganda & Kompleks */}
           {(formData.type_soal === 'Pilihan Ganda Tunggal (PG)' || formData.type_soal === 'Pilihan Ganda Kompleks (PK)') && (
-            <div className="grid grid-cols-1 gap-3 border p-4 rounded-lg bg-gray-50">
-              <h4 className="font-medium text-gray-700">Pilihan Jawaban</h4>
-              {['A', 'B', 'C', 'D', 'E'].map(opt => (
-                <div key={opt} className="flex items-start gap-2">
-                  <span className="font-bold w-4 mt-2">{opt}</span>
-                  <div className="w-full">
-                    <RichTextEditor
-                      value={formData[`pilihan_${opt.toLowerCase()}`]}
-                      onChange={(value) => setFormData({ ...formData, [`pilihan_${opt.toLowerCase()}`]: value })}
-                      placeholder={`Pilihan ${opt}`}
-                    />
-                  </div>
-                </div>
-              ))}
+            <div className="border p-4 rounded-lg bg-gray-50">
+              <h4 className="font-medium text-gray-700 mb-3">Pilihan Jawaban</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full table-fixed border-collapse">
+                  <thead>
+                    <tr className="text-left text-sm text-gray-600">
+                      <th className="w-12 px-2 py-2">Opsi</th>
+                      <th className="w-24 px-2 py-2">Kunci</th>
+                      <th className="px-2 py-2">Jawaban</th>
+                      <th className="w-32 px-2 py-2">Skor</th>
+                      <th className="w-20 px-2 py-2">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {Array.from({ length: optionCount }).map((_, i) => {
+                      const letter = String.fromCharCode(65 + i);
+                      const isPG = formData.type_soal === 'Pilihan Ganda Tunggal (PG)';
+                      const isPK = formData.type_soal === 'Pilihan Ganda Kompleks (PK)';
+                      const currentKunci = String(formData.kunci_jawaban || '');
+                      const selectedForPK = currentKunci ? currentKunci.split(',').map(s => s.trim()) : [];
+                      const checkedPK = selectedForPK.includes(letter);
+                      return (
+                        <tr key={letter} className="align-top">
+                          <td className="px-2 py-3 font-bold">{letter}</td>
+                          <td className="px-2 py-3">
+                            {isPG && (
+                              <button
+                                type="button"
+                                aria-pressed={currentKunci === letter}
+                                onClick={() => setFormData({ ...formData, kunci_jawaban: letter })}
+                                className={`inline-flex items-center justify-center w-6 h-6 rounded border ${currentKunci === letter ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'}`}
+                                title={currentKunci === letter ? 'Terpilih' : 'Pilih kunci'}
+                              >
+                                {currentKunci === letter ? (
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-white" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                  </svg>
+                                ) : null}
+                              </button>
+                            )}
+                            {isPK && (
+                              <button
+                                type="button"
+                                aria-pressed={checkedPK}
+                                onClick={() => {
+                                  const arr = currentKunci ? currentKunci.split(',').map(s => s.trim()).filter(Boolean) : [];
+                                  if (checkedPK) {
+                                    const idx = arr.indexOf(letter);
+                                    if (idx >= 0) arr.splice(idx, 1);
+                                  } else {
+                                    if (!arr.includes(letter)) arr.push(letter);
+                                  }
+                                  setFormData({ ...formData, kunci_jawaban: arr.join(',') });
+                                }}
+                                className={`inline-flex items-center justify-center w-6 h-6 rounded border ${checkedPK ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-300'}`}
+                                title={checkedPK ? 'Terpilih' : 'Centang untuk pilih'}
+                              >
+                                {checkedPK ? (
+                                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-white" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l8-8z" clipRule="evenodd" />
+                                  </svg>
+                                ) : null}
+                              </button>
+                            )}
+                          </td>
+                          <td className="px-2 py-3">
+                            <RichTextEditor
+                              value={formData[`pilihan_${letter.toLowerCase()}`]}
+                              onChange={(value) => setFormData({ ...formData, [`pilihan_${letter.toLowerCase()}`]: value })}
+                              placeholder={`Pilihan ${letter}`}
+                            />
+                          </td>
+                          <td className="px-2 py-3 flex items-start gap-2">
+                            {(() => {
+                              const isKeySelected = isPG ? currentKunci === letter : isPK ? checkedPK : false;
+                              return (
+                                <>
+                                  <input
+                                    type="number"
+                                    step="any"
+                                    value={formData[`scor_opsi_${i + 1}`]}
+                                    onChange={(e) => setFormData({ ...formData, [`scor_opsi_${i + 1}`]: e.target.value })}
+                                    disabled={!isKeySelected}
+                                    className={`w-24 rounded-lg border px-2 py-1 ${isKeySelected ? 'border-gray-300 bg-white' : 'border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed'}`}
+                                    placeholder="0"
+                                  />
+                                  {isKeySelected && (
+                                    <span className="inline-flex items-center text-green-600" title="Kunci terpilih">
+                                      <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l8-8z" clipRule="evenodd" />
+                                      </svg>
+                                    </span>
+                                  )}
+                                </>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-2 py-3">
+                            {optionCount > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  // clear the fields for this option then reduce count
+                                  const letterLower = letter.toLowerCase();
+                                  const idx = i + 1;
+                                  const copy: any = { ...formData };
+                                  copy[`pilihan_${letterLower}`] = '';
+                                  copy[`scor_opsi_${idx}`] = '';
+                                  // also remove from kunci_jawaban if present
+                                  const k = String(copy.kunci_jawaban || '');
+                                  if (k) {
+                                    const arr = k.split(',').map((s: string) => s.trim()).filter(Boolean);
+                                    const pos = arr.indexOf(letter);
+                                    if (pos >= 0) arr.splice(pos, 1);
+                                    copy.kunci_jawaban = arr.join(',');
+                                  }
+                                  setFormData(copy);
+                                  setOptionCount(prev => Math.max(2, prev - 1));
+                                }}
+                                className="text-sm text-red-600 hover:bg-red-50 px-2 py-1 rounded"
+                              >
+                                Hapus
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setOptionCount(prev => Math.min(5, prev + 1))}
+                  disabled={optionCount >= 5}
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  + Tambah opsi
+                </button>
+              </div>
             </div>
           )}
 
           {/* Benar/Salah & Setuju/Tidak */}
           {(formData.type_soal === 'Pilihan Benar/Salah (BS)' || formData.type_soal === 'Pilihan Setuju/Tidak (ST)') && (
-            <div className="grid grid-cols-1 gap-3 border p-4 rounded-lg bg-gray-50">
-              <h4 className="font-medium text-gray-700">Pernyataan</h4>
-              {[1, 2, 3, 4, 5].map(num => (
-                <div key={num} className="flex items-start gap-2">
-                  <span className="text-sm font-bold w-6 mt-2">{num}.</span>
-                  <div className="w-full">
-                    <RichTextEditor
-                      value={formData[`pernyataan_${num}`]}
-                      onChange={(value) => setFormData({ ...formData, [`pernyataan_${num}`]: value })}
-                      placeholder={`Pernyataan ${num}`}
-                    />
-                  </div>
-                </div>
-              ))}
+            <div className="border p-4 rounded-lg bg-gray-50">
+              <h4 className="font-medium text-gray-700 mb-3">Pernyataan</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full table-fixed border-collapse">
+                  <thead>
+                    <tr className="text-left text-sm text-gray-600">
+                      <th className="w-12 px-2 py-2">Opsi</th>
+                      <th className="px-2 py-2">Pernyataan</th>
+                      <th className="w-24 px-2 py-2">{formData.type_soal === 'Pilihan Benar/Salah (BS)' ? 'Benar' : 'Setuju'}</th>
+                      <th className="w-24 px-2 py-2">{formData.type_soal === 'Pilihan Benar/Salah (BS)' ? 'Salah' : 'Tidak'}</th>
+                      <th className="w-28 px-2 py-2">Skor</th>
+                      <th className="w-20 px-2 py-2">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {Array.from({ length: optionCount }).map((_, i) => {
+                      const num = i + 1;
+                      const letter = String.fromCharCode(64 + num);
+                      const currentAnswers = normalizeKunciJawaban(formData.kunci_jawaban || '', formData.type_soal).split(/[,\s]+/).filter(Boolean);
+                      while (currentAnswers.length < optionCount) currentAnswers.push('-');
+                      const answerChar = currentAnswers[i] || '-';
+                      const trueValue = formData.type_soal === 'Pilihan Benar/Salah (BS)' ? 'B' : 'S';
+                      const falseValue = formData.type_soal === 'Pilihan Benar/Salah (BS)' ? 'S' : 'T';
+                      const isTrue = answerChar === trueValue;
+                      const isFalse = answerChar === falseValue;
+
+                      const setAnswer = (value: string) => {
+                        setFormData((prev: any) => {
+                          const answers = normalizeKunciJawaban(prev.kunci_jawaban || '', prev.type_soal).split(/[,\s]+/).filter(Boolean);
+                          while (answers.length < optionCount) answers.push('-');
+                          answers[i] = value;
+                          return { ...prev, kunci_jawaban: answers.join(',') };
+                        });
+                      };
+
+                      return (
+                        <tr key={`bsst-${num}`} className="align-top">
+                          <td className="px-2 py-3 font-bold">{letter}</td>
+                          <td className="px-2 py-3">
+                            <RichTextEditor
+                              value={formData[`pernyataan_${num}`]}
+                              onChange={(value) => setFormData({ ...formData, [`pernyataan_${num}`]: value })}
+                              placeholder={`Pernyataan ${num}`}
+                            />
+                          </td>
+                          <td className="px-2 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setAnswer(trueValue)}
+                              className={`inline-flex items-center justify-center w-10 h-10 rounded-full border ${isTrue ? 'bg-green-600 border-green-600 text-white' : 'bg-white border-gray-300 text-gray-700'} focus:outline-none`}
+                              aria-pressed={isTrue}
+                              title={formData.type_soal === 'Pilihan Benar/Salah (BS)' ? 'Benar' : 'Setuju'}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L8 11.172l-2.293-2.293a1 1 0 00-1.414 1.414l3 3a1 1 0 001.414 0l7-7z" clipRule="evenodd" />
+                              </svg>
+                            </button>
+                          </td>
+                          <td className="px-2 py-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setAnswer(falseValue)}
+                              className={`inline-flex items-center justify-center w-10 h-10 rounded-full border ${isFalse ? 'bg-red-600 border-red-600 text-white' : 'bg-white border-gray-300 text-gray-700'} focus:outline-none`}
+                              aria-pressed={isFalse}
+                              title={formData.type_soal === 'Pilihan Benar/Salah (BS)' ? 'Salah' : 'Tidak'}
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M10 8.586l4.95-4.95a1 1 0 111.414 1.414L11.414 10l4.95 4.95a1 1 0 01-1.414 1.414L10 11.414l-4.95 4.95a1 1 0 01-1.414-1.414L8.586 10 3.636 5.05a1 1 0 011.414-1.414L10 8.586z" clipRule="evenodd" />
+                              </svg>
+                            </button>
+                          </td>
+                          <td className="px-2 py-3">
+                            <input
+                              type="number"
+                              step="any"
+                              value={formData[`scor_opsi_${num}`]}
+                              onChange={(e) => setFormData({ ...formData, [`scor_opsi_${num}`]: e.target.value })}
+                              className="w-full rounded-lg border border-gray-300 px-2 py-1"
+                              placeholder="0"
+                            />
+                          </td>
+                          <td className="px-2 py-3">
+                            {optionCount > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const copy: any = { ...formData };
+                                  copy[`pernyataan_${num}`] = '';
+                                  copy[`scor_opsi_${num}`] = '';
+                                  const current = String(copy.kunci_jawaban || '').split('');
+                                  current.splice(i, 1);
+                                  copy.kunci_jawaban = current.join('');
+                                  setFormData(copy);
+                                  setOptionCount(prev => Math.max(2, prev - 1));
+                                }}
+                                className="text-sm text-red-600 hover:bg-red-50 px-2 py-1 rounded"
+                              >
+                                Hapus
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setOptionCount(prev => Math.min(5, prev + 1))}
+                  disabled={optionCount >= 5}
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  + Tambah opsi
+                </button>
+              </div>
             </div>
           )}
 
           {/* Menjodohkan */}
           {formData.type_soal === 'Menjodohkan (MJ)' && (
-            <div className="grid grid-cols-1 gap-3 border p-4 rounded-lg bg-gray-50">
-              <h4 className="font-medium text-gray-700">Pasangan Jawaban</h4>
-              {[1, 2, 3, 4, 5].map((num) => (
-                <div key={num} className="grid grid-cols-2 gap-2">
-                  <div className="flex gap-1 items-start">
-                    <span className="text-xs font-bold mt-2">{num}.</span>
-                    <div className="w-full">
-                      <RichTextEditor
-                        value={formData[`pasangan_kiri_${num}`]}
-                        onChange={(value) => setFormData({ ...formData, [`pasangan_kiri_${num}`]: value })}
-                        placeholder={`Kiri ${num}`}
-                      />
-                    </div>
-                  </div>
-                  <div className="flex gap-1 items-start">
-                    <span className="text-xs font-bold mt-2">{String.fromCharCode(64 + num)}.</span>
-                    <div className="w-full">
-                      <RichTextEditor
-                        value={formData[`pasangan_kanan_${num}`]}
-                        onChange={(value) => setFormData({ ...formData, [`pasangan_kanan_${num}`]: value })}
-                        placeholder={`Kanan ${num}`}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div className="border p-4 rounded-lg bg-gray-50">
+              <h4 className="font-medium text-gray-700 mb-3">Pasangan Jawaban</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full table-fixed border-collapse">
+                  <thead>
+                    <tr className="text-left text-sm text-gray-600">
+                      <th className="w-12 px-2 py-2">No</th>
+                      <th className="px-2 py-2">Pernyataan Kiri</th>
+                      <th className="px-2 py-2">Jawaban Pernyataan Kanan</th>
+                      <th className="w-28 px-2 py-2">Skor</th>
+                      <th className="w-20 px-2 py-2">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {Array.from({ length: optionCount }).map((_, i) => {
+                      const num = i + 1;
+                      const letter = String.fromCharCode(64 + num);
+                      return (
+                        <tr key={`mj-${num}`} className="align-top">
+                          <td className="px-2 py-3 font-bold">{num}</td>
+                          <td className="px-2 py-3">
+                            <RichTextEditor
+                              value={formData[`pasangan_kiri_${num}`]}
+                              onChange={(value) => setFormData({ ...formData, [`pasangan_kiri_${num}`]: value })}
+                              placeholder={`Pernyataan Kiri ${num}`}
+                            />
+                          </td>
+                          <td className="px-2 py-3">
+                            <div className="flex gap-2 items-start">
+                              <span className="text-xs font-bold mt-2">{letter}.</span>
+                              <div className="w-full">
+                                <RichTextEditor
+                                  value={formData[`pasangan_kanan_${num}`]}
+                                  onChange={(value) => setFormData({ ...formData, [`pasangan_kanan_${num}`]: value })}
+                                  placeholder={`Pernyataan Kanan ${letter}`}
+                                />
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-2 py-3">
+                            <input
+                              type="number"
+                              step="any"
+                              value={formData[`scor_opsi_${num}`]}
+                              onChange={(e) => setFormData({ ...formData, [`scor_opsi_${num}`]: e.target.value })}
+                              className="w-full rounded-lg border border-gray-300 px-2 py-1"
+                              placeholder="0"
+                            />
+                          </td>
+                          <td className="px-2 py-3">
+                            {optionCount > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const copy: any = { ...formData };
+                                  copy[`pasangan_kiri_${num}`] = '';
+                                  copy[`pasangan_kanan_${num}`] = '';
+                                  copy[`scor_opsi_${num}`] = '';
+                                  setFormData(copy);
+                                  setOptionCount(prev => Math.max(2, prev - 1));
+                                }}
+                                className="text-sm text-red-600 hover:bg-red-50 px-2 py-1 rounded"
+                              >
+                                Hapus
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setOptionCount(prev => Math.min(5, prev + 1))}
+                  disabled={optionCount >= 5}
+                  className="text-sm text-blue-600 hover:underline"
+                >
+                  + Tambah opsi
+                </button>
+              </div>
             </div>
           )}
 
-          <div className="space-y-2 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
-            <label className="text-sm font-medium text-gray-700">Kunci Jawaban</label>
-            <RichTextEditor
-              value={formData.kunci_jawaban}
-              onChange={(value) => setFormData({ ...formData, kunci_jawaban: value })}
-              placeholder="Tulis kunci jawaban atau pembahasan di sini..."
-            />
-            <p className="text-xs text-gray-500 italic">{getKeyHint(formData.type_soal)}</p>
-          </div>
+          {formData.type_soal === 'Pilihan Ganda Tunggal (PG)' || formData.type_soal === 'Pilihan Ganda Kompleks (PK)' ? (
+            <div className="space-y-2 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+              <label className="text-sm font-medium text-gray-700">Kunci Jawaban</label>
+              <p className="text-sm text-gray-700">Pilih kunci jawaban langsung pada kolom <strong>Kunci</strong> di samping opsi.</p>
+              <div className="mt-2">
+                <label className="text-xs text-gray-500">Terpilih:</label>
+                <div className="mt-1 px-2 py-2 bg-white border rounded text-sm font-mono text-gray-700">{formData.kunci_jawaban || '-'}</div>
+              </div>
+              <div className="flex items-center gap-4">
+                <p className="text-xs text-gray-500 italic">{getKeyHint(formData.type_soal)}</p>
+              </div>
+            </div>
+          ) : formData.type_soal === 'Uraian (UR)' ? (
+            <div className="space-y-2 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+              <label className="text-sm font-medium text-gray-700">Kunci Jawaban</label>
+              <RichTextEditor
+                value={formData.kunci_jawaban}
+                onChange={(value) => setFormData({ ...formData, kunci_jawaban: value })}
+                placeholder="Tulis kunci jawaban atau pembahasan di sini..."
+              />
+              <div className="flex items-center gap-4">
+                <p className="text-xs text-gray-500 italic">{getKeyHint(formData.type_soal)}</p>
+                <div className="ml-auto w-40">
+                  <label className="text-xs text-gray-500">Skor Esai</label>
+                  <input
+                    type="number"
+                    step="any"
+                    value={formData.scor_opsi_esai}
+                    onChange={(e) => setFormData({ ...formData, scor_opsi_esai: e.target.value })}
+                    className="w-full rounded-lg border border-gray-300 px-2 py-1"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+            </div>
+          ) : formData.type_soal === 'Menjodohkan (MJ)' ? (
+            <div className="space-y-2 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+              <label className="text-sm font-medium text-gray-700">Kunci Jawaban</label>
+              <RichTextEditor
+                value={formData.kunci_jawaban}
+                onChange={(value) => setFormData({ ...formData, kunci_jawaban: value })}
+                placeholder="Tulis kunci jawaban atau pembahasan di sini..."
+              />
+              <div className="flex items-center gap-4">
+                <p className="text-xs text-gray-500 italic">{getKeyHint(formData.type_soal)}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2 bg-yellow-50 p-3 rounded-lg border border-yellow-200">
+              <label className="text-sm font-medium text-gray-700">Kunci Jawaban</label>
+              <p className="text-sm text-gray-700">Pilih kunci jawaban langsung pada baris Pernyataan.</p>
+              <div className="flex items-center gap-4">
+                <p className="text-xs text-gray-500 italic">{getKeyHint(formData.type_soal)}</p>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-col sm:flex-row justify-end gap-2 mt-4 pt-4 border-t">
             <button
@@ -810,119 +1202,176 @@ export function BankSoalPage() {
         </form>
       </div>
     )}
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-sm text-gray-500">
-          Menampilkan {filteredData.length} dari {data.length} soal
-          {selectedIds.length > 0 && (
-            <span className="ml-2 text-red-600 font-medium">
-              ({selectedIds.length} dipilih)
-            </span>
-          )}
-        </div>
-        <div className="flex gap-2">
-          {selectedIds.length > 0 && (
+      <div className={isFormPageOpen ? 'hidden' : ''}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="text-sm text-gray-500">
+            Menampilkan {filteredData.length} dari {data.length} soal
+            {selectedIds.length > 0 && (
+              <span className="ml-2 text-red-600 font-medium">({selectedIds.length} dipilih)</span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <button
-              onClick={() => {
-                setDeleteType('selected');
-                setShowDeleteModal(true);
-              }}
-              className="flex items-center gap-2 bg-red-100 text-red-700 px-4 py-2 rounded-lg hover:bg-red-200"
+              type="button"
+              onClick={() => setIsPreviewOpen(true)}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
             >
-              <Trash2 className="h-4 w-4" /> Hapus Terpilih ({selectedIds.length})
+              Preview Soal
             </button>
-          )}
-          {filteredData.length > 0 && (
-            <button
-              onClick={() => {
-                setDeleteType('all');
-                setShowDeleteModal(true);
-              }}
-              className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
-            >
-              <Trash2 className="h-4 w-4" /> Hapus Semua
-            </button>
-          )}
+            {selectedIds.length > 0 && (
+              <button
+                onClick={() => { setDeleteType('selected'); setShowDeleteModal(true); }}
+                className="flex items-center gap-2 bg-red-100 text-red-700 px-4 py-2 rounded-lg hover:bg-red-200"
+              >
+                <Trash2 className="h-4 w-4" /> Hapus Terpilih ({selectedIds.length})
+              </button>
+            )}
+            {filteredData.length > 0 && (
+              <button
+                onClick={() => { setDeleteType('all'); setShowDeleteModal(true); }}
+                className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700"
+              >
+                <Trash2 className="h-4 w-4" /> Hapus Semua
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Table */}
+        {data.length === 0 ? (
+          <div className="bg-white rounded-xl shadow-sm border p-8 text-center text-gray-600">
+            Tidak ada data soal. Tambahkan soal baru.
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-50 border-b">
+                    <th className="px-4 py-3 text-left">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.length === filteredData.length && filteredData.length > 0}
+                        onChange={handleSelectAll}
+                        className="w-4 h-4 text-red-600 rounded"
+                      />
+                    </th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Mapel</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">No</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Type</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Pertanyaan</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Kunci</th>
+                    <th className="px-4 py-3 text-center text-sm font-semibold text-gray-600">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredData.map(item => (
+                    <tr key={item.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(item.id)}
+                          onChange={() => handleSelectItem(item.id)}
+                          className="w-4 h-4 text-red-600 rounded"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">{item.mata_pelajaran}</td>
+                      <td className="px-4 py-3 text-gray-700">{item.no_soal}</td>
+                      <td className="px-4 py-3">
+                        <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
+                          {getTypeShort(item.type_soal)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">{item.pertanyaan?.substring(0, 50)}{item.pertanyaan?.length > 50 ? '...' : ''}</td>
+                      <td className="px-4 py-3 text-gray-700 font-mono text-sm">{item.kunci_jawaban}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-center gap-2">
+                          <button onClick={() => handleEdit(item)} className="px-3 py-1 text-blue-600 hover:bg-blue-50 rounded text-sm">Edit</button>
+                          <button onClick={() => handleDelete(item)} className="px-3 py-1 text-red-600 hover:bg-red-50 rounded text-sm">Hapus</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {filteredData.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-8 text-center text-gray-500">Tidak ada data soal. Gunakan filter atau tambah soal baru.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Table */}
-      {data.length === 0 ? (
-        <div className="bg-white rounded-xl shadow-sm border p-8 text-center text-gray-600">
-          Tidak ada data soal. Tambahkan soal baru.
-        </div>
-      ) : (
-        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-            <thead>
-              <tr className="bg-gray-50 border-b">
-                <th className="px-4 py-3 text-left">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.length === filteredData.length && filteredData.length > 0}
-                    onChange={handleSelectAll}
-                    className="w-4 h-4 text-red-600 rounded"
-                  />
-                </th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Mapel</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">No</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Type</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Pertanyaan</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Kunci</th>
-                <th className="px-4 py-3 text-center text-sm font-semibold text-gray-600">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {filteredData.map(item => (
-                <tr key={item.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.includes(item.id)}
-                      onChange={() => handleSelectItem(item.id)}
-                      className="w-4 h-4 text-red-600 rounded"
-                    />
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">{item.mata_pelajaran}</td>
-                  <td className="px-4 py-3 text-gray-700">{item.no_soal}</td>
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
-                      {getTypeShort(item.type_soal)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-700">
-                    {item.pertanyaan?.substring(0, 50)}{item.pertanyaan?.length > 50 ? '...' : ''}
-                  </td>
-                  <td className="px-4 py-3 text-gray-700 font-mono text-sm">{item.kunci_jawaban}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-center gap-2">
-                      <button
-                        onClick={() => handleEdit(item)}
-                        className="px-3 py-1 text-blue-600 hover:bg-blue-50 rounded text-sm"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(item)}
-                        className="px-3 py-1 text-red-600 hover:bg-red-50 rounded text-sm"
-                      >
-                        Hapus
-                      </button>
+      {/* Preview Modal */}
+      {isPreviewOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setIsPreviewOpen(false)} />
+          <div className="relative z-10 max-w-6xl w-full max-h-[90vh] overflow-hidden rounded-3xl shadow-2xl border border-gray-200 bg-white">
+            <div className="flex flex-col gap-4 border-b border-gray-200 bg-white px-6 py-5 sm:flex-row sm:items-center sm:justify-between no-print">
+              <div>
+                <h3 className="text-xl font-semibold text-gray-900">Preview Soal</h3>
+                <p className="text-sm text-gray-500">Tampilkan semua soal yang sedang difilter dan simpan dalam bentuk PDF.</p>
+              </div>
+              <div className="flex flex-wrap gap-2 items-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAnswerKey(prev => !prev)}
+                  className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+                >
+                  {showAnswerKey ? 'Hide Kunci' : 'Show Kunci'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+                >
+                  Download PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsPreviewOpen(false)}
+                  className="inline-flex items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+            <div className="overflow-y-auto h-[calc(90vh-120px)] bg-gray-50 p-6">
+              <div className="print-area-inner">
+                {filteredData.length === 0 ? (
+                  <div className="rounded-3xl border border-dashed border-gray-300 bg-white p-8 text-center text-gray-500">
+                    Tidak ada soal untuk ditampilkan.
+                  </div>
+                ) : (
+                  filteredData.map((item, index) => (
+                    <div key={item.id} className="mb-10 last:mb-0 print-break">
+                      <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm print-break">
+                        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="space-y-2">
+                            <div className="text-sm font-semibold uppercase tracking-[0.16em] text-red-600">Soal {index + 1}</div>
+                            <div className="text-base font-semibold text-gray-900">{item.mata_pelajaran || '-'} • {getTypeShort(item.type_soal)} • No. {item.no_soal}</div>
+                          </div>
+                          {showAnswerKey && item.kunci_jawaban && (
+                            <div className="rounded-full border border-gray-200 bg-gray-100 px-3 py-1 text-sm text-gray-600">Kunci: {item.kunci_jawaban}</div>
+                          )}
+                        </div>
+                        <div className="mb-6 rounded-3xl border border-gray-200 bg-gray-50 p-5">
+                          <div className="text-sm font-semibold text-gray-700 mb-3">Pertanyaan</div>
+                          <div className="prose prose-sm text-gray-800" dangerouslySetInnerHTML={{ __html: item.pertanyaan || '<p>-</p>' }} />
+                        </div>
+                        <div className="space-y-4">
+                          {renderPreviewOptions(item)}
+                        </div>
+                      </div>
                     </div>
-                  </td>
-                </tr>
-              ))}
-              {filteredData.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
-                    Tidak ada data soal. Gunakan filter atau tambah soal baru.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
       )}
 
       {/* Delete Confirmation Modal */}

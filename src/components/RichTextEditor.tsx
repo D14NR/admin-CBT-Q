@@ -3,7 +3,6 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import { Bold, Italic, List, ListOrdered, Heading2, ImagePlus, Plus, X } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
-import { uploadImageToCloudinary } from '@/cloudinary';
 
 interface RichTextEditorProps {
   value: string;
@@ -163,14 +162,16 @@ export function RichTextEditor({
 
     setUploading(true);
     try {
-      const result = await uploadImageToCloudinary(file);
-      if (!result || !result.secure_url) {
-        throw new Error('Upload gagal: tidak ada URL gambar');
-      }
-      const url = result.secure_url;
-      editor.chain().focus().setImage({ src: url }).run();
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+        reader.onerror = () => reject(new Error('Gagal membaca file gambar'));
+        reader.readAsDataURL(file);
+      });
+
+      editor.chain().focus().setImage({ src: dataUrl, alt: file.name }).run();
       onChange(editor.getHTML());
-      if (onImageUpload) onImageUpload(url);
+      if (onImageUpload) onImageUpload(dataUrl);
     } catch (error) {
       console.error('Failed to upload image:', error);
       alert('Gagal mengunggah gambar');
@@ -251,11 +252,10 @@ export function RichTextEditor({
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
           className="p-2 rounded hover:bg-gray-200 disabled:opacity-50"
-          title="Insert Image"
+          title="Tambah Gambar"
         >
           <ImagePlus className="h-4 w-4" />
         </button>
-
 
         <button
           type="button"
@@ -267,14 +267,13 @@ export function RichTextEditor({
         </button>
       </div>
 
-
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleImageUpload}
-          className="hidden"
-        />
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImageUpload}
+        className="hidden"
+      />
 
       {/* Formula Input */}
       {showFormulaInput && (
@@ -320,7 +319,6 @@ export function RichTextEditor({
         className="prose prose-sm max-w-none p-4 min-h-[20px] max-h-[180px] overflow-y-auto focus:outline-none [&_.formula]:bg-yellow-100 [&_.formula]:px-1 [&_.formula]:rounded [&_img]:max-w-full [&_img]:h-auto"
       />
 
-      {/* Loading Indicator */}
       {uploading && (
         <div className="border-t border-gray-200 px-4 py-2 bg-blue-50 text-sm text-blue-600">
           Mengunggah gambar...
